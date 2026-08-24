@@ -1,0 +1,61 @@
+# Python Cache & Bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.cpython-*.pyc
+*.cpython-*.pyo
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+.eggs/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.build_venv/
+.pystand/
+
+# Build & Packaging Outputs (>100MB)
+dist/
+build/
+installer_output/
+app_package.zip
+*.spec
+*.exe
+*.msi
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+*.appImage
+
+# Database & Storage Files
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated Reports, PDFs & Logs
+*.pdf
+*.log
+*.csv
+*.txt.log
+test_results.txt
+test_report_detailed.txt
+get-pip.py
+.pyside6_dir_cache
+
+# IDE / Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini

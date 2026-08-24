@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["src/renderer/src/lib/*"],
+      "$components/*": ["src/renderer/src/lib/components/*"],
+      "$pages/*": ["src/renderer/src/lib/pages/*"]
+    }
+  },
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.d.ts", "src/renderer/src/**/*.svelte"],
+  "references": [{ "path": "./tsconfig.main.json" }]
+}
