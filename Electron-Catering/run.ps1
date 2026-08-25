@@ -29,21 +29,24 @@ function Install-Dependencies {
 }
 
 # node_modules contains OS-specific native binaries (rollup, sqlite3, etc). If this
-# folder was copied over from another OS (git checkout onto a drive that still has an
-# old node_modules, a zip/USB transfer, etc.) instead of installed fresh here, those
-# binaries won't run on Windows and every command fails with confusing native-module
-# errors. Track which OS node_modules was actually installed for, and auto-reinstall
-# if it doesn't match this machine — no manual "delete node_modules" steps needed.
+# folder was copied over from another OS instead of installed fresh here, those
+# binaries won't run on Windows and commands fail with confusing native-module errors.
+# Track which OS node_modules was installed for, and auto-reinstall if it doesn't
+# match this machine, so no manual "delete node_modules" steps are ever needed.
 $platformMarker = "node_modules\.platform-marker"
 $needsInstall = $false
+
 if (-not (Test-Path "node_modules")) {
     $needsInstall = $true
 } elseif (-not (Test-Path $platformMarker)) {
     Write-Host "node_modules exists but wasn't installed by this script (likely copied from another machine/OS)." -ForegroundColor Yellow
     $needsInstall = $true
-} elseif ((Get-Content $platformMarker -Raw).Trim() -ne "win32") {
-    Write-Host "node_modules was installed for a different OS — native binaries won't work on Windows." -ForegroundColor Yellow
-    $needsInstall = $true
+} else {
+    $recordedPlatform = (Get-Content $platformMarker -Raw).Trim()
+    if ($recordedPlatform -ne "win32") {
+        Write-Host "node_modules was installed for a different OS. Native binaries will not work on Windows." -ForegroundColor Yellow
+        $needsInstall = $true
+    }
 }
 
 if ($needsInstall) {
