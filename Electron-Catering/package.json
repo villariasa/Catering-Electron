@@ -6,22 +6,27 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "vite",
+    "start": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "vite",
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
-    "pdf-lib": "^1.17.1",
+    "@google/generative-ai": "^0.24.1",
     "sqlite3": "^5.1.7",
+    "clsx": "^2.1.1",
+    "nodemailer": "^9.0.5",
+    "pdf-lib": "^1.17.1",
     "tailwind-merge": "^3.6.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
-    "@types/node": "^22.13.4",
     "@types/sqlite3": "^3.1.11",
+    "@types/node": "^22.13.4",
+    "@types/nodemailer": "^8.0.1",
     "electron": "^34.2.0",
     "electron-builder": "^25.1.8",
     "lucide-svelte": "^0.475.0",

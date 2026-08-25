@@ -1,14 +1,23 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { User } from '../../../preload/types';
+  import type { User, Notification } from '../../../preload/types';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Card from '$lib/components/ui/Card.svelte';
+  import { THEME_PALETTES, applyThemePalette } from '$lib/theme';
 
   export let title: string = 'Dashboard';
   export let currentUser: User | null = null;
-  export let onNewBooking: () => void;
   export let onLogout: () => void;
+
+  // ── Quick Theme Toggle ──
+  let currentThemeId = 'dark_mode';
+  $: currentMode = THEME_PALETTES[currentThemeId]?.mode || 'dark';
+
+  function toggleTheme() {
+    currentThemeId = currentMode === 'dark' ? 'light_mode' : 'dark_mode';
+    applyThemePalette(currentThemeId);
+  }
 
   // Date and Time without seconds counting (updates every 30 sec)
   let dateTimeStr = formatDateTime();
@@ -21,33 +30,61 @@
     return `${dateStr} • ${timeStr}`;
   }
 
-  // Notifications Drawer State
+  // Notifications Drawer State (real, persisted via `notifications` table)
   let showNotifications = false;
-  let notifications = [
-    { id: 1, type: 'booking', title: 'Upcoming Catering Event', message: 'Juan Dela Cruz — Birthday Party on Aug 28 (100 pax)', time: '10m ago', unread: true },
-    { id: 2, type: 'billing', title: 'Unpaid Invoice Balance', message: 'Carlos Reyes has ₱67,500.00 unpaid balance due', time: '1h ago', unread: true },
-    { id: 3, type: 'inventory', title: 'Low Stock Warning', message: 'Pork Belly stock is down to 12.0 kg in freezer', time: '3h ago', unread: true }
-  ];
+  let notifications: Notification[] = [];
 
-  $: unreadCount = notifications.filter(n => n.unread).length;
+  $: unreadCount = notifications.filter(n => !n.is_read).length;
+
+  function timeAgo(iso?: string): string {
+    if (!iso) return '';
+    const diffMs = Date.now() - new Date(iso.replace(' ', 'T')).getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  async function loadNotifications() {
+    try {
+      notifications = await window.electronAPI.notifications.getAll();
+    } catch (e) {
+      console.error('[Topbar] Failed to load notifications:', e);
+    }
+  }
 
   function toggleNotifications() {
     showNotifications = !showNotifications;
+    if (showNotifications) loadNotifications();
   }
 
-  function markAllRead() {
-    notifications = [];
-    showNotifications = false;
+  async function markAllRead() {
+    try {
+      await window.electronAPI.notifications.clearAll();
+      notifications = notifications.map((n) => ({ ...n, is_read: true }));
+    } catch (e) {
+      console.error('[Topbar] Failed to clear notifications:', e);
+    }
   }
 
-  function removeNotification(id: number) {
-    notifications = notifications.filter(n => n.id !== id);
+  async function removeNotification(id: number) {
+    try {
+      await window.electronAPI.notifications.delete(id);
+      notifications = notifications.filter(n => n.id !== id);
+    } catch (e) {
+      console.error('[Topbar] Failed to delete notification:', e);
+    }
   }
 
   onMount(() => {
+    currentThemeId = localStorage.getItem('selected_theme_id') || 'dark_mode';
     timer = setInterval(() => {
       dateTimeStr = formatDateTime();
+      loadNotifications();
     }, 30000);
+    loadNotifications();
   });
 
   onDestroy(() => {
@@ -67,9 +104,12 @@
     <div class="relative">
       <button
         type="button"
-        class="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-300 hover:text-white hover:border-slate-700 transition-all relative cursor-pointer"
+        class="w-10 h-10 rounded-xl flex items-center justify-center transition-all relative cursor-pointer"
+        style="background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-secondary);"
         title="Notifications"
         on:click={toggleNotifications}
+        on:mouseenter={(e) => (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)'}
+        on:mouseleave={(e) => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-color)'}
       >
         <img src="assets/icons/svg/bell.svg" alt="Notifications" class="w-4 h-4 nav-icon" />
         {#if unreadCount > 0}
@@ -103,11 +143,11 @@
                 <p class="text-[10px] text-slate-500">No active system alerts at this time.</p>
               </div>
             {:else}
-              {#each notifications as item}
-                <div class="p-3.5 rounded-xl border text-left space-y-1.5 transition-colors relative bg-rose-500/10 border-rose-500/30 hover:border-rose-500/50">
+              {#each notifications as item (item.id)}
+                <div class="p-3.5 rounded-xl border text-left space-y-1.5 transition-colors relative {item.is_read ? 'bg-slate-900 border-slate-800' : 'bg-rose-500/10 border-rose-500/30 hover:border-rose-500/50'}">
                   <div class="flex justify-between items-center pr-6">
                     <span class="font-extrabold text-slate-100 text-xs">{item.title}</span>
-                    <span class="text-[10px] text-slate-400 font-mono">{item.time}</span>
+                    <span class="text-[10px] text-slate-400 font-mono">{timeAgo(item.created_at)}</span>
                   </div>
                   <p class="text-xs text-slate-300 leading-normal pr-4">{item.message}</p>
                   <button
@@ -126,11 +166,29 @@
       {/if}
     </div>
 
-    <!-- Quick Action Button -->
-    <Button size="sm" on:click={onNewBooking}>
-      <img src="assets/icons/svg/plus.svg" alt="" class="w-3.5 h-3.5 filter invert brightness-200" />
-      <span>New Booking</span>
-    </Button>
+    <!-- Quick Theme Toggle -->
+    <button
+      type="button"
+      class="w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer"
+      style="background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-secondary);"
+      title={currentMode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+      on:click={toggleTheme}
+      on:mouseenter={(e) => (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-primary)'}
+      on:mouseleave={(e) => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-color)'}
+    >
+      {#if currentMode === 'dark'}
+        <!-- Sun icon -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+        </svg>
+      {:else}
+        <!-- Moon icon -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+      {/if}
+    </button>
 
     <!-- User Profile & Sign Out -->
     {#if currentUser}

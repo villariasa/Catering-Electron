@@ -1,56 +1,74 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-
-  interface KitchenOrder {
-    id: number;
-    booking_ref: string;
-    customer_name: string;
-    occasion: string;
-    event_date: string;
-    event_time: string;
-    venue: string;
-    pax: number;
-    dishes: string[];
-    prep_status: 'Queued' | 'In Prep' | 'Ready' | 'Completed';
-  }
+  import type { KitchenOrder } from '../../../../preload/types';
 
   let orders: KitchenOrder[] = [];
+  let loading = true;
+  let addingTaskFor: number | null = null;
+  let newTaskLabel = '';
 
-  onMount(() => {
-    orders = [
-      {
-        id: 1,
-        booking_ref: 'BK-2026-0001',
-        customer_name: 'Juan Dela Cruz',
-        occasion: 'Birthday Party',
-        event_date: '2026-08-28',
-        event_time: '17:00',
-        venue: 'Marco Polo Ballroom, Nivel Hills',
-        pax: 100,
-        dishes: ['Pork Hamonado (15 kg)', 'Bam-I Noodles (8 trays)', 'Lechon Kawali (12 kg)', 'Pandan Rice (100 pax)', 'Iced Tea'],
-        prep_status: 'In Prep'
-      },
-      {
-        id: 2,
-        booking_ref: 'BK-2026-0002',
-        customer_name: 'Maria Santos',
-        occasion: 'Wedding Reception',
-        event_date: '2026-09-12',
-        event_time: '18:30',
-        venue: 'Waterfront Hotel Grand Ballroom',
-        pax: 200,
-        dishes: ['Lechon Belly (25 kg)', 'Beef Caldereta (20 kg)', 'Fish Fillet Tartar (15 kg)', 'Baked Macaroni (12 trays)', 'Mango Float'],
-        prep_status: 'Queued'
-      }
-    ];
-  });
+  async function loadOrders() {
+    try {
+      orders = await window.electronAPI.kitchen.getAllOrders();
+    } catch (e) {
+      console.error('[Kitchen] Failed to load orders:', e);
+    } finally {
+      loading = false;
+    }
+  }
 
-  function updateStatus(order: KitchenOrder, status: KitchenOrder['prep_status']) {
-    order.prep_status = status;
-    orders = [...orders];
+  onMount(loadOrders);
+
+  async function updateStatus(order: KitchenOrder, status: KitchenOrder['status']) {
+    try {
+      await window.electronAPI.kitchen.updateOrderStatus(order.id, status);
+      orders = orders.map((o) => (o.id === order.id ? { ...o, status } : o));
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update order status.');
+    }
+  }
+
+  async function toggleTask(order: KitchenOrder, taskId: number) {
+    try {
+      await window.electronAPI.kitchen.toggleTask(taskId);
+      orders = orders.map((o) =>
+        o.id === order.id
+          ? { ...o, tasks: (o.tasks || []).map((t) => (t.id === taskId ? { ...t, is_done: !t.is_done } : t)) }
+          : o
+      );
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update task.');
+    }
+  }
+
+  function startAddTask(order: KitchenOrder) {
+    addingTaskFor = order.id;
+    newTaskLabel = '';
+  }
+
+  async function submitAddTask(order: KitchenOrder) {
+    if (!newTaskLabel.trim()) return;
+    try {
+      const task = await window.electronAPI.kitchen.addTask(order.id, newTaskLabel.trim());
+      orders = orders.map((o) => (o.id === order.id ? { ...o, tasks: [...(o.tasks || []), task] } : o));
+      addingTaskFor = null;
+      newTaskLabel = '';
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to add task.');
+    }
+  }
+
+  async function removeTask(order: KitchenOrder, taskId: number) {
+    try {
+      await window.electronAPI.kitchen.deleteTask(taskId);
+      orders = orders.map((o) => (o.id === order.id ? { ...o, tasks: (o.tasks || []).filter((t) => t.id !== taskId) } : o));
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete task.');
+    }
   }
 </script>
 
@@ -63,43 +81,87 @@
     <p class="text-xs text-slate-400">Order prep tickets for kitchen staff grouped by catering date & time.</p>
   </div>
 
+  {#if loading}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {#each [1,2] as _}
+        <div class="rounded-2xl border border-slate-800 p-5 space-y-4 animate-pulse bg-slate-900/60">
+          <div class="h-4 bg-slate-800 rounded w-1/2"></div>
+          <div class="h-4 bg-slate-800 rounded w-3/4"></div>
+          <div class="h-16 bg-slate-800 rounded"></div>
+        </div>
+      {/each}
+    </div>
+  {:else if orders.length === 0}
+    <div class="p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-2xl space-y-2">
+      <p class="font-bold text-slate-300">No Active Kitchen Orders</p>
+      <p class="text-xs">All upcoming events are complete or no bookings found in the database.</p>
+    </div>
+  {:else}
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-    {#each orders as order}
-      <Card className="space-y-4 border-l-4 {order.prep_status === 'In Prep' ? 'border-l-amber-500' : order.prep_status === 'Ready' ? 'border-l-emerald-500' : 'border-l-blue-500'}">
+    {#each orders as order (order.id)}
+      <Card className="space-y-4 border-l-4 {order.status === 'In Prep' ? 'border-l-amber-500' : order.status === 'Ready' ? 'border-l-emerald-500' : order.status === 'Completed' ? 'border-l-slate-600' : 'border-l-blue-500'}">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
           <div>
-            <span class="font-mono text-xs font-bold text-emerald-400">{order.booking_ref}</span>
+            <span class="font-mono text-xs font-bold text-emerald-400">{order.booking_ref || order.order_ref}</span>
             <h4 class="font-bold text-slate-100 text-sm">{order.customer_name} ({order.occasion})</h4>
           </div>
-          <Badge variant={order.prep_status === 'Ready' ? 'green' : order.prep_status === 'In Prep' ? 'amber' : 'blue'}>
-            {order.prep_status}
+          <Badge variant={order.status === 'Ready' ? 'green' : order.status === 'In Prep' ? 'amber' : order.status === 'Completed' ? 'secondary' : 'blue'}>
+            {order.status}
           </Badge>
         </div>
 
         <div class="grid grid-cols-2 gap-2 text-xs text-slate-400 bg-slate-900/60 p-3 rounded-xl">
-          <div>Date: <strong class="text-slate-200">{order.event_date}</strong></div>
-          <div>Time: <strong class="text-slate-200">{order.event_time}</strong></div>
+          <div>Date: <strong class="text-slate-200">{order.event_date || '—'}</strong></div>
+          <div>Time: <strong class="text-slate-200">{order.event_time || '—'}</strong></div>
           <div>Guest Count: <strong class="text-slate-200">{order.pax} Pax</strong></div>
-          <div>Venue: <strong class="text-slate-200">{order.venue}</strong></div>
+          <div>Venue: <strong class="text-slate-200">{order.venue || '—'}</strong></div>
         </div>
 
         <div>
-          <span class="block text-xs font-semibold text-slate-300 mb-2">Preparation Dish Items Checklist</span>
+          <div class="flex items-center justify-between mb-2">
+            <span class="block text-xs font-semibold text-slate-300">Preparation Dish Items Checklist</span>
+            <button class="text-[10px] font-bold text-emerald-400 hover:text-emerald-300" on:click={() => startAddTask(order)}>+ Add Item</button>
+          </div>
           <ul class="space-y-1.5 text-xs text-slate-300">
-            {#each order.dishes as dish}
+            {#each order.tasks || [] as task (task.id)}
               <li class="flex items-center gap-2 bg-slate-900/40 p-2 rounded-lg border border-slate-800/60">
-                <input type="checkbox" class="rounded bg-slate-900 border-slate-700 text-emerald-500 cursor-pointer" />
-                <span>{dish}</span>
+                <input
+                  type="checkbox"
+                  checked={task.is_done}
+                  class="rounded bg-slate-900 border-slate-700 text-emerald-500 cursor-pointer"
+                  on:change={() => toggleTask(order, task.id)}
+                />
+                <span class={task.is_done ? 'line-through text-slate-500' : ''}>{task.label}</span>
+                <button class="ml-auto text-slate-600 hover:text-red-400 text-xs" on:click={() => removeTask(order, task.id)}>x</button>
               </li>
             {/each}
+            {#if addingTaskFor === order.id}
+              <li class="flex items-center gap-2 p-2">
+                <input
+                  type="text"
+                  bind:value={newTaskLabel}
+                  placeholder="New checklist item..."
+                  class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                  on:keydown={(e) => e.key === 'Enter' && submitAddTask(order)}
+                />
+                <button class="text-emerald-400 text-xs font-bold" on:click={() => submitAddTask(order)}>Add</button>
+                <button class="text-slate-500 text-xs" on:click={() => (addingTaskFor = null)}>Cancel</button>
+              </li>
+            {/if}
           </ul>
         </div>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-          <Button variant="outline" size="sm" on:click={() => updateStatus(order, 'In Prep')}>Start Prep</Button>
-          <Button variant="default" size="sm" on:click={() => updateStatus(order, 'Ready')}>Mark Ready</Button>
+          {#if order.status !== 'Completed'}
+            <Button variant="outline" size="sm" on:click={() => updateStatus(order, 'In Prep')}>Start Prep</Button>
+            <Button variant="outline" size="sm" on:click={() => updateStatus(order, 'Ready')}>Mark Ready</Button>
+            <Button variant="default" size="sm" on:click={() => updateStatus(order, 'Completed')}>Complete</Button>
+          {:else}
+            <Badge variant="secondary">Completed</Badge>
+          {/if}
         </div>
       </Card>
     {/each}
   </div>
+  {/if}
 </div>

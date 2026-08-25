@@ -5,82 +5,73 @@ import electron from 'electron';
 const app = electron?.app;
 
 let dbInstance: sqlite3.Database | null = null;
+let dbFilePath: string | null = null;
 
-export function getDatabase(): Promise<sqlite3.Database> {
-  return new Promise((resolve, reject) => {
-    if (dbInstance) {
-      return resolve(dbInstance);
-    }
-
-    const userDataPath = app ? app.getPath('userData') : path.join(process.cwd(), '.data');
-    if (!fs.existsSync(userDataPath)) {
-      fs.mkdirSync(userDataPath, { recursive: true });
-    }
-
-    const dbPath = path.join(userDataPath, 'electron-test.db');
-    console.log(`[Database] Connecting to SQLite database at: ${dbPath}`);
-
-    const db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error('[Database] Failed to open SQLite database:', err);
-        return reject(err);
-      }
-      
-      db.run('PRAGMA journal_mode = WAL;');
-      db.run('PRAGMA foreign_keys = ON;', (pragmaErr) => {
-        if (pragmaErr) console.warn('[Database] Pragma error:', pragmaErr);
-        dbInstance = db;
-        resolve(dbInstance);
-      });
-    });
-  });
+export function getDatabasePath(): string {
+  if (dbFilePath) return dbFilePath;
+  const userDataPath = app ? app.getPath('userData') : path.join(process.cwd(), '.data');
+  return path.join(userDataPath, 'electron-test.db');
 }
 
-export function closeDatabase(): Promise<void> {
-  return new Promise((resolve) => {
-    if (dbInstance) {
-      dbInstance.close(() => {
-        dbInstance = null;
-        resolve();
-      });
-    } else {
-      resolve();
-    }
-  });
-}
+export async function getDatabase(): Promise<sqlite3.Database> {
+  if (dbInstance) return dbInstance;
 
-export function queryAll<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
+  const userDataPath = app ? app.getPath('userData') : path.join(process.cwd(), '.data');
+  if (!fs.existsSync(userDataPath)) {
+    fs.mkdirSync(userDataPath, { recursive: true });
+  }
+
+  const dbPath = path.join(userDataPath, 'electron-test.db');
+  dbFilePath = dbPath;
+  console.log(`[Database] Connecting to SQLite database at: ${dbPath}`);
+
+  const db = await new Promise<sqlite3.Database>((resolve, reject) => {
+    const d = new sqlite3.Database(dbPath, (err) => {
       if (err) reject(err);
-      else resolve(rows as T[]);
+      else resolve(d);
     });
+  });
+
+  await queryExec(db, 'PRAGMA journal_mode = WAL');
+  await queryExec(db, 'PRAGMA synchronous = NORMAL');
+  await queryExec(db, 'PRAGMA foreign_keys = ON');
+
+  dbInstance = db;
+  return dbInstance;
+}
+
+export async function closeDatabase(): Promise<void> {
+  if (dbInstance) {
+    await new Promise<void>((resolve, reject) => {
+      dbInstance!.close((err) => (err ? reject(err) : resolve()));
+    });
+    dbInstance = null;
+  }
+}
+
+export async function queryAll<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows as T[])));
   });
 }
 
-export function queryGet<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T | undefined> {
+export async function queryGet<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row as T);
-    });
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row as T | undefined)));
   });
 }
 
-export function queryRun(db: sqlite3.Database, sql: string, params: any[] = []): Promise<{ lastID: number; changes: number }> {
+export async function queryRun(db: sqlite3.Database, sql: string, params: any[] = []): Promise<{ lastID: number; changes: number }> {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
+    db.run(sql, params, function (this: sqlite3.RunResult, err) {
       if (err) reject(err);
       else resolve({ lastID: this.lastID, changes: this.changes });
     });
   });
 }
 
-export function queryExec(db: sqlite3.Database, sql: string): Promise<void> {
+export async function queryExec(db: sqlite3.Database, sql: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    db.exec(sql, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
+    db.exec(sql, (err) => (err ? reject(err) : resolve()));
   });
 }

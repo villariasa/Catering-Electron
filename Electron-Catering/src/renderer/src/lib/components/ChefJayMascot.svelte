@@ -3,29 +3,46 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
-  import { processChefJayAIQuery } from '../ai_engine';
+  import ThinkingIndicator from '$lib/components/ThinkingIndicator.svelte';
+  import StreamingMessage from '$lib/components/StreamingMessage.svelte';
+  import type { GeneratedDocument } from '../../../preload/types';
+
+  export let currentScreen: string = '';
+
+  // xlsx (~280kB) is only needed once the AI actually generates a document to preview —
+  // loading it eagerly here would add it to the app's startup bundle since this mascot
+  // is always mounted.
+  let DocumentPreviewCardComp: any = null;
+  async function ensureDocumentPreviewLoaded() {
+    if (!DocumentPreviewCardComp) {
+      DocumentPreviewCardComp = (await import('$lib/components/DocumentPreviewCard.svelte')).default;
+    }
+  }
+  $: if (messages.some((m) => m.document)) ensureDocumentPreviewLoaded();
 
   let isOpen = false;
   let inputQuery = '';
   let isThinking = false;
+  let drawerContainer: HTMLDivElement;
 
   interface Message {
+    id: number;
     sender: 'user' | 'chef';
     text: string;
     time: string;
-    options?: { label: string; send: string }[];
+    actions?: string[];
+    isStreaming?: boolean;
+    isError?: boolean;
+    document?: GeneratedDocument | null;
   }
 
   let messages: Message[] = [
     {
+      id: 1,
       sender: 'chef',
-      text: "Hello! I'm Chef Jay AI! Ask me about your bookings, unpaid invoices, revenue, or recipe portioning!",
+      text: "Hello! I'm Chef Jay AI 🤖 Ask me about your catering bookings, unpaid invoices, revenue, or to record expenses & new bookings!",
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      options: [
-        { label: 'Compare Revenue vs Expenses', send: 'compare revenue vs expenses' },
-        { label: 'Unpaid Invoices', send: 'unpaid invoices' },
-        { label: 'Portions for 200 Pax', send: 'portions for 200 pax' }
-      ]
+      isStreaming: false
     }
   ];
 
@@ -33,20 +50,76 @@
     isOpen = !isOpen;
   }
 
-  function handleSend(queryText?: string) {
-    const text = queryText || inputQuery;
-    if (!text.trim() || isThinking) return;
+  async function scrollToBottom() {
+    if (drawerContainer) {
+      drawerContainer.scrollTop = drawerContainer.scrollHeight;
+    }
+  }
+
+  async function handleSend(queryText?: string) {
+    const text = (queryText || inputQuery).trim();
+    if (!text || isThinking) return;
 
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    messages = [...messages, { sender: 'user', text, time: timeStr }];
+
+    // Map history of prior messages
+    const historyPayload = messages.map(m => ({
+      role: m.sender === 'user' ? ('user' as const) : ('model' as const),
+      text: m.text
+    }));
+
+    messages = [...messages, { id: Date.now(), sender: 'user', text, time: timeStr }];
     inputQuery = '';
     isThinking = true;
+    const startTime = Date.now();
+    scrollToBottom();
 
-    setTimeout(() => {
-      const res = processChefJayAIQuery(text);
-      messages = [...messages, { sender: 'chef', text: res.answer, time: timeStr, options: res.options }];
+    try {
+      if (!window.electronAPI || !window.electronAPI.ai) {
+        throw new Error("Electron API is not available or app is running outside Electron window.");
+      }
+      const timeoutMs = 30000;
+      const res: any = await Promise.race([
+        window.electronAPI.ai.query(text, historyPayload, currentScreen),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Chef Jay is taking too long to respond. Please try again.')), timeoutMs))
+      ]);
+
+      const elapsed = Date.now() - startTime;
+      const minDelay = Math.max(0, 350 - elapsed);
+      if (minDelay > 0) {
+        await new Promise(r => setTimeout(r, minDelay));
+      }
+
       isThinking = false;
-    }, 350);
+      messages = [
+        ...messages,
+        {
+          id: Date.now() + 1,
+          sender: 'chef',
+          text: res.answer,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          actions: res.actions || [],
+          isStreaming: true,
+          isError: !res.success,
+          document: res.generatedDocument || null
+        }
+      ];
+    } catch (e: any) {
+      isThinking = false;
+      messages = [
+        ...messages,
+        {
+          id: Date.now() + 1,
+          sender: 'chef',
+          text: `⚠️ Connection error: ${e?.message || 'Unable to reach Chef Jay AI.'}`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+          isStreaming: false
+        }
+      ];
+    } finally {
+      scrollToBottom();
+    }
   }
 </script>
 
@@ -66,7 +139,7 @@
           <div>
             <div class="flex items-center gap-2">
               <h4 class="font-extrabold text-slate-100 text-sm">Chef Jay AI</h4>
-              <Badge variant="green" className="text-[9px] py-0 px-1.5">LOCAL NLP AI</Badge>
+              <Badge variant="green" className="text-[9px] py-0 px-1.5">FLASH LITE ⚡</Badge>
             </div>
             <p class="text-[11px] text-emerald-400 font-medium">Online • Jayraldine Assistant</p>
           </div>
@@ -82,42 +155,41 @@
       </div>
 
       <!-- Messages Feed -->
-      <div class="flex-1 overflow-y-auto space-y-3 py-3 px-1 text-xs">
-        {#each messages as msg}
+      <div bind:this={drawerContainer} class="flex-1 overflow-y-auto space-y-3 py-3 px-1 text-xs">
+        {#each messages as msg (msg.id)}
           <div class="flex flex-col {msg.sender === 'user' ? 'items-end' : 'items-start'}">
             <span class="text-[10px] text-slate-400 mb-0.5 px-1">{msg.sender === 'user' ? 'You' : 'Chef Jay AI'} • {msg.time}</span>
             <div class="max-w-[88%] p-3.5 rounded-2xl leading-relaxed whitespace-pre-line {msg.sender === 'user' ? 'bg-rose-600 text-white font-semibold' : 'bg-slate-900 border border-slate-800 text-slate-100'}">
-              {msg.text}
-            </div>
+              {#if msg.sender === 'chef' && msg.isStreaming}
+                <StreamingMessage
+                  text={msg.text}
+                  actions={msg.actions || []}
+                  isError={msg.isError || false}
+                  on:chunk={scrollToBottom}
+                  on:complete={() => (msg.isStreaming = false)}
+                />
+              {:else}
+                {msg.text}
+              {/if}
 
-            {#if msg.options && msg.options.length > 0}
-              <div class="flex flex-wrap gap-1.5 mt-2 max-w-[88%]">
-                {#each msg.options as opt}
-                  <button
-                    class="px-2 py-1 rounded-lg bg-slate-900 border border-rose-500/40 text-rose-300 hover:bg-rose-600 hover:text-white font-bold text-[10px] transition-all cursor-pointer"
-                    on:click={() => handleSend(opt.send)}
-                  >
-                    {opt.label} ➔
-                  </button>
-                {/each}
-              </div>
-            {/if}
+              {#if msg.document}
+                {#if DocumentPreviewCardComp}
+                  <svelte:component this={DocumentPreviewCardComp} doc={msg.document} />
+                {/if}
+              {/if}
+            </div>
           </div>
         {/each}
 
         {#if isThinking}
-          <div class="flex items-start gap-2">
-            <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-xs font-mono animate-pulse">
-              Chef Jay AI is querying database records...
-            </div>
-          </div>
+          <ThinkingIndicator />
         {/if}
       </div>
 
       <!-- Input Bar -->
       <form on:submit|preventDefault={() => handleSend()} class="flex gap-2 pt-2 border-t border-slate-800">
-        <Input bind:value={inputQuery} placeholder="Ask Chef Jay about revenue, unpaid accounts, or portions..." />
-        <Button type="submit" size="sm">Send</Button>
+        <Input bind:value={inputQuery} placeholder="Ask Chef Jay about revenue, unpaid accounts, or portions..." disabled={isThinking} />
+        <Button type="submit" size="sm" disabled={isThinking || !inputQuery.trim()}>Send</Button>
       </form>
     </Card>
   {/if}

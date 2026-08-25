@@ -1,7 +1,7 @@
 import { PDFDocument, rgb, StandardFonts, PageSizes } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
-import type { Booking } from '../../preload/types';
+import type { Booking, Invoice, BusinessInfo } from '../../preload/types';
 
 function sanitizePdfText(str: string): string {
   if (!str) return '';
@@ -254,5 +254,175 @@ export class PdfExporterService {
       console.error('[PdfExporterService] PDF export error:', err);
       return false;
     }
+  }
+
+  /**
+   * Generate a single-page A4 portrait payment receipt for an invoice.
+   */
+  async generateReceiptPdf(invoice: Invoice, business: BusinessInfo): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.create();
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const page = pdfDoc.addPage(PageSizes.A4);
+    const W = PageSizes.A4[0];
+    const H = PageSizes.A4[1];
+    const MX = 50;
+    let y = H - 60;
+
+    page.drawText(sanitizePdfText(business.name || "Jayraldine's Catering"), {
+      x: MX, y, size: 20, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255),
+    });
+    y -= 18;
+    page.drawText(sanitizePdfText(business.address || 'Cebu City, Philippines'), {
+      x: MX, y, size: 9, font: fontRegular, color: rgb(71 / 255, 85 / 255, 105 / 255),
+    });
+    y -= 12;
+    page.drawText(sanitizePdfText(`${business.contact || ''}  ${business.email || ''}`.trim()), {
+      x: MX, y, size: 9, font: fontRegular, color: rgb(71 / 255, 85 / 255, 105 / 255),
+    });
+
+    y -= 40;
+    page.drawRectangle({ x: MX, y: y - 6, width: W - 2 * MX, height: 1, color: rgb(203 / 255, 213 / 255, 225 / 255) });
+    y -= 30;
+
+    page.drawText('OFFICIAL RECEIPT', { x: MX, y, size: 16, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+    y -= 24;
+
+    const rows: [string, string][] = [
+      ['Invoice #', invoice.invoice_ref],
+      ['Booking #', invoice.booking_ref],
+      ['Customer', invoice.customer_name],
+      ['Event Date', invoice.event_date],
+      ['Status', invoice.status],
+    ];
+    for (const [label, value] of rows) {
+      page.drawText(sanitizePdfText(label), { x: MX, y, size: 10, font: fontBold, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+      page.drawText(sanitizePdfText(value || '-'), { x: MX + 130, y, size: 10, font: fontRegular, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+      y -= 18;
+    }
+
+    y -= 20;
+    page.drawRectangle({ x: MX, y: y - 6, width: W - 2 * MX, height: 1, color: rgb(203 / 255, 213 / 255, 225 / 255) });
+    y -= 30;
+
+    const amountRows: [string, number][] = [
+      ['Total Amount', invoice.total_amount],
+      ['Amount Paid', invoice.amount_paid],
+      ['Balance Due', invoice.balance],
+    ];
+    for (const [label, amount] of amountRows) {
+      page.drawText(sanitizePdfText(label), { x: MX, y, size: 11, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+      page.drawText(sanitizePdfText(`PHP ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`), {
+        x: MX + 300, y, size: 11, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255),
+      });
+      y -= 20;
+    }
+
+    y -= 30;
+    page.drawText(sanitizePdfText(`Generated ${new Date().toLocaleString('en-PH')}`), {
+      x: MX, y, size: 8, font: fontRegular, color: rgb(148 / 255, 163 / 255, 184 / 255),
+    });
+
+    return pdfDoc.save();
+  }
+
+  /**
+   * Generate a single-page A4 portrait financial report PDF (KPIs + monthly revenue table).
+   */
+  async generateFinancialReportPdf(reportData: any, business: BusinessInfo, period: string): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.create();
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const page = pdfDoc.addPage(PageSizes.A4);
+    const W = PageSizes.A4[0];
+    const H = PageSizes.A4[1];
+    const MX = 50;
+    let y = H - 60;
+
+    page.drawText(sanitizePdfText(business.name || "Jayraldine's Catering"), { x: MX, y, size: 20, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+    y -= 20;
+    page.drawText(sanitizePdfText(`Financial Report — ${period}`), { x: MX, y, size: 12, font: fontBold, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+    y -= 30;
+    page.drawRectangle({ x: MX, y: y - 6, width: W - 2 * MX, height: 1, color: rgb(203 / 255, 213 / 255, 225 / 255) });
+    y -= 26;
+
+    const kpis: [string, string][] = [
+      ['Total Bookings', String(reportData.totalBookings)],
+      ['Total Revenue', `PHP ${reportData.totalRevenue.toLocaleString()}`],
+      ['Total Pax', String(reportData.totalPax)],
+      ['Unpaid Balance', `PHP ${reportData.unpaidTotal.toLocaleString()}`],
+      ["Today's Bookings", String(reportData.todayBookings)],
+      ["This Week's Bookings", String(reportData.weekBookings)],
+    ];
+    for (const [label, value] of kpis) {
+      page.drawText(sanitizePdfText(label), { x: MX, y, size: 10, font: fontBold, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+      page.drawText(sanitizePdfText(value), { x: MX + 220, y, size: 10, font: fontRegular, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+      y -= 18;
+    }
+
+    y -= 16;
+    page.drawText('Monthly Revenue (last 12 months)', { x: MX, y, size: 12, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+    y -= 20;
+    for (const m of reportData.monthlyRevenue || []) {
+      if (y < 60) break;
+      page.drawText(sanitizePdfText(m.month), { x: MX, y, size: 9, font: fontRegular, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+      page.drawText(sanitizePdfText(`PHP ${m.revenue.toLocaleString()}`), { x: MX + 100, y, size: 9, font: fontRegular, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+      y -= 14;
+    }
+
+    page.drawText(sanitizePdfText(`Generated ${new Date().toLocaleString('en-PH')}`), { x: MX, y: 30, size: 8, font: fontRegular, color: rgb(148 / 255, 163 / 255, 184 / 255) });
+
+    return pdfDoc.save();
+  }
+
+  /**
+   * Generic multi-page A4 portrait table listing PDF (used by the AI's document-generation tool).
+   */
+  async generateTablePdf(title: string, columns: string[], rows: (string | number)[][], bizName = "Jayraldine's Catering"): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.create();
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    const W = PageSizes.A4[0];
+    const H = PageSizes.A4[1];
+    const MX = 40;
+    const colW = (W - 2 * MX) / Math.max(1, columns.length);
+    const rowH = 18;
+
+    let page = pdfDoc.addPage(PageSizes.A4);
+    let y = H - 50;
+
+    const drawHeader = () => {
+      page.drawText(sanitizePdfText(bizName), { x: MX, y, size: 14, font: fontBold, color: rgb(15 / 255, 23 / 255, 42 / 255) });
+      y -= 18;
+      page.drawText(sanitizePdfText(title), { x: MX, y, size: 11, font: fontBold, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+      y -= 22;
+      page.drawRectangle({ x: MX, y: y - 4, width: W - 2 * MX, height: rowH, color: rgb(30 / 255, 41 / 255, 59 / 255) });
+      columns.forEach((col, i) => {
+        page.drawText(sanitizePdfText(col).toUpperCase(), { x: MX + i * colW + 4, y: y + 1, size: 7, font: fontBold, color: rgb(1, 1, 1) });
+      });
+      y -= rowH + 4;
+    };
+
+    drawHeader();
+
+    rows.forEach((row, idx) => {
+      if (y < 40) {
+        page = pdfDoc.addPage(PageSizes.A4);
+        y = H - 50;
+        drawHeader();
+      }
+      if (idx % 2 === 0) {
+        page.drawRectangle({ x: MX, y: y - 4, width: W - 2 * MX, height: rowH, color: rgb(248 / 255, 250 / 255, 252 / 255) });
+      }
+      row.forEach((cell, i) => {
+        page.drawText(sanitizePdfText(String(cell ?? '')).slice(0, 40), { x: MX + i * colW + 4, y: y + 1, size: 7.5, font: fontRegular, color: rgb(30 / 255, 41 / 255, 59 / 255) });
+      });
+      y -= rowH;
+    });
+
+    return pdfDoc.save();
   }
 }

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Jayraldine's Catering Desktop
+Comment=Jayraldine's Catering Management System Desktop Edition
+Exec=/home/villarias/Projects/Catering-Electron/run.sh
+Icon=/home/villarias/Projects/Catering-Electron/Electron-Catering/src/renderer/public/assets/logo.png
+Terminal=true
+Categories=Development;Office;

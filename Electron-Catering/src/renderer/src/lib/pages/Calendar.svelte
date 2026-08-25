@@ -1,24 +1,28 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
-  import type { Booking } from '../../../preload/types';
+  import type { Booking, CalendarEvent } from '../../../preload/types';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Card from '$lib/components/ui/Card.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import ImportWizardModal from '$lib/components/ImportWizardModal.svelte';
   import ExportWizardModal from '$lib/components/ExportWizardModal.svelte';
 
-  let bookings: Booking[] = [
-    { id: 1, booking_number: 'BK-2026-0001', customer_name: 'Juan Dela Cruz', event_type: 'Birthday Party', event_date: '2026-08-28', pax: 100, venue: 'Marco Polo Ballroom, Nivel Hills', total_amount: 45000, amount_paid: 15000, balance_amount: 30000, status: 'CONFIRMED' },
-    { id: 2, booking_number: 'BK-2026-0002', customer_name: 'Maria Santos', event_type: 'Wedding Reception', event_date: '2026-09-12', pax: 200, venue: 'Waterfront Hotel Grand Ballroom', total_amount: 130000, amount_paid: 130000, balance_amount: 0, status: 'CONFIRMED' },
-    { id: 3, booking_number: 'BK-2026-0003', customer_name: 'Carlos Reyes', event_type: 'Corporate Anniversary', event_date: '2026-09-25', pax: 150, venue: 'Cebu Trade Hall', total_amount: 67500, amount_paid: 0, balance_amount: 67500, status: 'PENDING' },
-    { id: 4, booking_number: 'BK-2026-0004', customer_name: 'Dr. Evelyn Tan', event_type: 'Medical Symposium', event_date: '2026-10-05', pax: 80, venue: 'Chong Hua Hospital Auditorium', total_amount: 52000, amount_paid: 20000, balance_amount: 32000, status: 'CONFIRMED' }
-  ];
+  let bookings: Booking[] = [];
+  let manualEvents: CalendarEvent[] = [];
+  let loading = true;
+
+  let showAddEventForm = false;
+  let newEventName = '';
+  let newEventTime = '';
+  let newEventLocation = '';
 
   let showImportModal = false;
   let showExportModal = false;
 
   // Interactive Month Navigation State
-  let currentDate = new Date(2026, 7, 1); // August 2026
+  let currentDate = new Date(); // Current month
   $: monthNameStr = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   $: yearNum = currentDate.getFullYear();
   $: monthIdx = currentDate.getMonth();
@@ -27,8 +31,15 @@
   $: daysInMonth = new Date(yearNum, monthIdx + 1, 0).getDate();
   $: startDayOffset = new Date(yearNum, monthIdx, 1).getDay();
 
-  // Side Drawer Details Inspector State
-  let selectedDayNum: number = 28; // Default to Aug 28 (which has events)
+  let selectedDayNum: number = new Date().getDate();
+
+  async function loadManualEvents() {
+    try {
+      manualEvents = await window.electronAPI.calendarEvents.getForMonth(yearNum, monthIdx + 1);
+    } catch (e) {
+      console.error('[Calendar] Failed to load manual events:', e);
+    }
+  }
 
   onMount(async () => {
     try {
@@ -37,23 +48,62 @@
         if (fetched && fetched.length > 0) {
           bookings = fetched.map((b: any) => ({
             ...b,
-            booking_number: b.booking_ref || b.booking_number || 'BK-2026-REC',
+            booking_number: b.booking_ref || b.booking_number || 'BK-REC',
             event_type: b.occasion || b.event_type || 'Catering Event',
             balance_amount: b.balance !== undefined ? b.balance : b.balance_amount || 0
           }));
         }
       }
+      await loadManualEvents();
     } catch (e) {
       console.error(e);
+    } finally {
+      loading = false;
     }
   });
 
   function prevMonth() {
     currentDate = new Date(yearNum, monthIdx - 1, 1);
+    loadManualEvents();
   }
 
   function nextMonth() {
     currentDate = new Date(yearNum, monthIdx + 1, 1);
+    loadManualEvents();
+  }
+
+  function getManualEventsForDay(dateStr: string) {
+    return manualEvents.filter((e) => e.event_date === dateStr);
+  }
+
+  async function handleAddManualEvent() {
+    if (!newEventName.trim()) return toast.error('Event name is required');
+    try {
+      const dateStr = activeDayInfo.dateStr;
+      const created = await window.electronAPI.calendarEvents.create({
+        event_date: dateStr,
+        name: newEventName.trim(),
+        event_time: newEventTime || undefined,
+        location: newEventLocation || undefined,
+      });
+      manualEvents = [...manualEvents, created];
+      showAddEventForm = false;
+      newEventName = '';
+      newEventTime = '';
+      newEventLocation = '';
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to add event.');
+    }
+  }
+
+  async function handleDeleteManualEvent(ev: CalendarEvent) {
+    if (!ev.id) return;
+    try {
+      await window.electronAPI.calendarEvents.delete(ev.id);
+      manualEvents = manualEvents.filter((e) => e.id !== ev.id);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete event.');
+    }
   }
 
   function getPaxForDay(day: number) {
@@ -69,7 +119,8 @@
     });
 
     const totalPax = evs.reduce((s, b) => s + (b.pax || 0), 0);
-    return { count: evs.length, totalPax, events: evs, dateStr: targetDateStr };
+    const manual = getManualEventsForDay(targetDateStr);
+    return { count: evs.length + manual.length, totalPax, events: evs, manualEvents: manual, dateStr: targetDateStr };
   }
 
   function handleDayClick(day: number) {
@@ -100,16 +151,16 @@
         const defaultSavePath = `/home/villarias/Downloads/jayraldines_calendar_${yearNum}_${monthIdx + 1}.pdf`;
         const success = await window.electronAPI.reports.exportCalendarPdf(defaultSavePath, yearNum, monthIdx + 1);
         if (success) {
-          alert(`Landscape Wall Calendar PDF generated and saved successfully!`);
+          toast.success(`Landscape Wall Calendar PDF generated and saved successfully!`);
         } else {
-          alert('PDF export was canceled or could not save to the specified folder.');
+          toast.error('PDF export was canceled or could not save to the specified folder.');
         }
       } else {
-        alert('PDF Export Service is available in the desktop application.');
+        toast.info('PDF Export Service is available in the desktop application.');
       }
     } catch (e) {
       console.error('PDF Export Error:', e);
-      alert('Failed to generate PDF document. Please check daily logs for details.');
+      toast.error('Failed to generate PDF document. Please check daily logs for details.');
     }
   }
 
@@ -233,7 +284,7 @@
 
         <!-- Events Cards List -->
         <div class="space-y-3 max-h-[380px] overflow-y-auto pr-1">
-          {#if activeDayInfo.events.length === 0}
+          {#if activeDayInfo.events.length === 0 && activeDayInfo.manualEvents.length === 0}
             <div class="p-6 text-center bg-slate-950/60 rounded-2xl border border-dashed border-slate-800 space-y-2">
               <p class="text-slate-300 font-bold text-xs">No Events Scheduled</p>
               <p class="text-[11px] text-slate-500">Kitchen capacity available on {activeDayInfo.dateStr}.</p>
@@ -257,14 +308,39 @@
                 </div>
               </div>
             {/each}
+            {#each activeDayInfo.manualEvents as ev (ev.id)}
+              <div class="p-3.5 rounded-2xl bg-slate-950 border border-blue-500/40 space-y-1.5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h5 class="font-extrabold text-slate-100 text-xs">{ev.name}</h5>
+                    <p class="text-[11px] text-blue-400 font-semibold">{ev.event_time || 'No time set'} {ev.location ? `• ${ev.location}` : ''}</p>
+                  </div>
+                  <button class="text-slate-600 hover:text-red-400 text-xs" on:click={() => handleDeleteManualEvent(ev)}>x</button>
+                </div>
+              </div>
+            {/each}
           {/if}
         </div>
+
+        {#if showAddEventForm}
+          <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <Input bind:value={newEventName} placeholder="Event name / note" />
+            <div class="grid grid-cols-2 gap-2">
+              <Input type="time" bind:value={newEventTime} />
+              <Input bind:value={newEventLocation} placeholder="Location (optional)" />
+            </div>
+            <div class="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" type="button" on:click={() => (showAddEventForm = false)}>Cancel</Button>
+              <Button size="sm" type="button" on:click={handleAddManualEvent}>Save Event</Button>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <!-- Quick Action Footer Button -->
       <div class="pt-3 border-t border-slate-800 flex gap-2">
-        <Button size="sm" className="w-full" on:click={() => alert(`Creating new booking for ${activeDayInfo.dateStr}`)}>
-          + Book Event on This Date
+        <Button variant="outline" size="sm" className="w-full" on:click={() => (showAddEventForm = true)}>
+          + Add Manual Event
         </Button>
       </div>
     </Card>

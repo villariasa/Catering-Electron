@@ -5,25 +5,44 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import Topbar from './lib/components/Topbar.svelte';
   import ChefJayMascot from './lib/components/ChefJayMascot.svelte';
+  import ToastContainer from './lib/components/ToastContainer.svelte';
 
   import Login from './lib/pages/Login.svelte';
+  // Dashboard is the immediate post-login screen, so it stays a static import (no
+  // loading flash on the most common entry point). Every other page is loaded on
+  // demand — with 14 pages plus xlsx/pdf-lib/nodemailer surface area, eagerly
+  // importing all of them slowed initial app parse/compile for no benefit, since
+  // only one page is ever visible at a time.
   import Dashboard from './lib/pages/Dashboard.svelte';
-  import Bookings from './lib/pages/Bookings.svelte';
-  import Calendar from './lib/pages/Calendar.svelte';
-  import Customers from './lib/pages/Customers.svelte';
-  import Packages from './lib/pages/Packages.svelte';
-  import Expenses from './lib/pages/Expenses.svelte';
-  import Billing from './lib/pages/Billing.svelte';
-  import CashFlow from './lib/pages/CashFlow.svelte';
-  import Reports from './lib/pages/Reports.svelte';
-  import Kitchen from './lib/pages/Kitchen.svelte';
-  import Inventory from './lib/pages/Inventory.svelte';
-  import AIAssistant from './lib/pages/AIAssistant.svelte';
-  import Settings from './lib/pages/Settings.svelte';
+
+  const pageLoaders: Record<string, () => Promise<{ default: any }>> = {
+    bookings: () => import('./lib/pages/Bookings.svelte'),
+    calendar: () => import('./lib/pages/Calendar.svelte'),
+    customers: () => import('./lib/pages/Customers.svelte'),
+    packages: () => import('./lib/pages/Packages.svelte'),
+    expenses: () => import('./lib/pages/Expenses.svelte'),
+    billing: () => import('./lib/pages/Billing.svelte'),
+    cashflow: () => import('./lib/pages/CashFlow.svelte'),
+    reports: () => import('./lib/pages/Reports.svelte'),
+    kitchen: () => import('./lib/pages/Kitchen.svelte'),
+    inventory: () => import('./lib/pages/Inventory.svelte'),
+    ai: () => import('./lib/pages/AIAssistant.svelte'),
+    settings: () => import('./lib/pages/Settings.svelte'),
+  };
+
+  const pageComponentCache: Record<string, any> = {};
 
   let currentUser: User | null = null;
   let checkingAuth = true;
   let currentPage = 'dashboard';
+  let sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
+  let LazyPage: any = null;
+  let loadingPage = false;
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    localStorage.setItem('sidebar_collapsed', String(sidebarCollapsed));
+  }
 
   import { applyThemePalette } from './lib/theme';
 
@@ -54,12 +73,22 @@
     currentUser = null;
   }
 
-  function handleSelectPage(page: string) {
+  async function handleSelectPage(page: string) {
     currentPage = page;
-  }
-
-  function handleNewBooking() {
-    currentPage = 'bookings';
+    if (page === 'dashboard' || !pageLoaders[page]) {
+      LazyPage = null;
+      return;
+    }
+    if (pageComponentCache[page]) {
+      LazyPage = pageComponentCache[page];
+      return;
+    }
+    loadingPage = true;
+    LazyPage = null;
+    const mod = await pageLoaders[page]();
+    pageComponentCache[page] = mod.default;
+    if (currentPage === page) LazyPage = mod.default;
+    loadingPage = false;
   }
 
   const pageTitles: Record<string, string> = {
@@ -74,10 +103,12 @@
     reports: 'Financial Reports & Analytics',
     kitchen: 'Kitchen Display System (KDS)',
     inventory: 'Inventory & Supply Stock',
-    ai: 'Jayraldine AI Assistant Copilot',
+    ai: 'Jayraldine AI Assistant',
     settings: 'Settings & Database Tools'
   };
 </script>
+
+<ToastContainer />
 
 {#if checkingAuth}
   <div class="h-screen w-screen bg-slate-950 flex items-center justify-center text-xs text-slate-400">
@@ -88,49 +119,32 @@
 {:else}
   <div class="flex h-screen w-screen overflow-hidden bg-slate-900 text-slate-100 relative">
     <!-- Navigation Sidebar -->
-    <Sidebar {currentPage} onSelectPage={handleSelectPage} />
+    <Sidebar {currentPage} onSelectPage={handleSelectPage} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} />
 
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col h-full overflow-hidden relative">
       <Topbar
         title={pageTitles[currentPage] || 'Dashboard'}
         {currentUser}
-        onNewBooking={handleNewBooking}
         onLogout={handleLogout}
       />
 
       <main class="flex-1 overflow-hidden bg-slate-900/50 relative">
         {#if currentPage === 'dashboard'}
           <Dashboard onNavigate={handleSelectPage} />
-        {:else if currentPage === 'bookings'}
-          <Bookings />
-        {:else if currentPage === 'calendar'}
-          <Calendar />
-        {:else if currentPage === 'customers'}
-          <Customers />
-        {:else if currentPage === 'packages'}
-          <Packages />
-        {:else if currentPage === 'expenses'}
-          <Expenses />
-        {:else if currentPage === 'billing'}
-          <Billing />
-        {:else if currentPage === 'cashflow'}
-          <CashFlow />
-        {:else if currentPage === 'reports'}
-          <Reports />
-        {:else if currentPage === 'kitchen'}
-          <Kitchen />
-        {:else if currentPage === 'inventory'}
-          <Inventory />
-        {:else if currentPage === 'ai'}
-          <AIAssistant />
-        {:else if currentPage === 'settings'}
-          <Settings />
+        {:else if loadingPage}
+          <div class="h-full flex items-center justify-center text-xs text-slate-500">Loading...</div>
+        {:else if LazyPage}
+          {#if currentPage === 'ai'}
+            <svelte:component this={LazyPage} currentScreen={pageTitles[currentPage]} />
+          {:else}
+            <svelte:component this={LazyPage} />
+          {/if}
         {/if}
       </main>
     </div>
 
     <!-- Global Floating Chef Jay AI Mascot Avatar Widget (Present on ALL pages) -->
-    <ChefJayMascot />
+    <ChefJayMascot currentScreen={pageTitles[currentPage] || currentPage} />
   </div>
 {/if}

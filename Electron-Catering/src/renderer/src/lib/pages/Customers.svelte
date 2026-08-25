@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
-  import type { Customer } from '../../../preload/types';
+  import type { Customer, FollowUp, Booking } from '../../../preload/types';
   import Card from '$lib/components/ui/Card.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -9,6 +10,7 @@
   import ExportWizardModal from '$lib/components/ExportWizardModal.svelte';
 
   let customers: Customer[] = [];
+  let allBookings: Booking[] = [];
   let loading = true;
   let searchQuery = '';
   let tierFilter = 'All';
@@ -20,66 +22,106 @@
   let showProfileDrawer = false;
   let selectedCustomer: Customer | null = null;
 
+  // Follow-ups panel state
+  let followUps: FollowUp[] = [];
+  let newFollowUpDate = new Date().toISOString().split('T')[0];
+  let newFollowUpNote = '';
+
   // New Customer Form State
   let name = '';
   let phone = '09171234567';
   let email = '';
   let address = 'Cebu City';
-  let tier = 'Regular';
 
   async function fetchCustomers() {
     loading = true;
     try {
-      if (window.electronAPI && window.electronAPI.customers) {
-        customers = await window.electronAPI.customers.getAll();
-      } else {
-        if (customers.length === 0) {
-          customers = [
-            { id: 1, name: 'Juan Dela Cruz', contact_number: '09171234567', email: 'juan@gmail.com', address: 'Lahug, Cebu City', loyalty_tier: 'Regular' },
-            { id: 2, name: 'Maria Santos', contact_number: '09189876543', email: 'maria@yahoo.com', address: 'Banilad, Mandaue City', loyalty_tier: 'VIP' },
-            { id: 3, name: 'Carlos Reyes', contact_number: '09223334444', email: 'carlos@outlook.com', address: 'Tisa, Cebu City', loyalty_tier: 'New' },
-            { id: 4, name: 'Dr. Evelyn Tan', contact_number: '09178889999', email: 'evelyn.tan@chonghua.ph', address: 'Fuente Osmeña, Cebu City', loyalty_tier: 'VIP' }
-          ];
-        }
-      }
+      const [custs, bookings] = await Promise.all([
+        window.electronAPI.customers.getAll(),
+        window.electronAPI.bookings.getAll(),
+      ]);
+      customers = custs;
+      allBookings = bookings;
     } catch (e) {
-      console.error(e);
+      console.error('[Customers] Failed to load:', e);
     } finally {
       loading = false;
     }
   }
 
   async function handleAddCustomer() {
-    if (!name.trim()) return alert('Customer name is required');
+    if (!name.trim()) return toast.error('Customer name is required');
     const newC: Customer = {
       name,
       contact_number: phone,
       email,
       address,
-      loyalty_tier: tier
+      loyalty_tier: 'New'
     };
 
     try {
-      if (window.electronAPI && window.electronAPI.customers) {
-        await window.electronAPI.customers.create(newC);
-        await fetchCustomers();
-      } else {
-        customers = [{ id: Date.now(), ...newC }, ...customers];
-      }
+      await window.electronAPI.customers.create(newC);
+      await fetchCustomers();
       showAddModal = false;
       name = '';
-      alert('Customer saved to SQLite database!');
+      toast.success('Customer saved to SQLite database!');
     } catch (e) {
-      alert(`Failed to add customer: ${e}`);
+      toast.error(`Failed to add customer: ${e}`);
     }
   }
 
-  function handleViewProfile(c: Customer) {
+  async function handleViewProfile(c: Customer) {
     selectedCustomer = c;
     showProfileDrawer = true;
+    followUps = [];
+    if (c.id) {
+      try {
+        followUps = await window.electronAPI.customers.getFollowUps(c.id);
+      } catch (e) {
+        console.error('[Customers] Failed to load follow-ups:', e);
+      }
+    }
+  }
+
+  async function handleAddFollowUp() {
+    if (!selectedCustomer?.id || !newFollowUpDate) return;
+    try {
+      const created = await window.electronAPI.customers.addFollowUp(selectedCustomer.id, newFollowUpDate, newFollowUpNote || undefined);
+      followUps = [...followUps, created];
+      newFollowUpNote = '';
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to add follow-up.');
+    }
+  }
+
+  async function handleToggleFollowUp(f: FollowUp) {
+    try {
+      await window.electronAPI.customers.toggleFollowUp(f.id);
+      followUps = followUps.map((x) => (x.id === f.id ? { ...x, is_done: !x.is_done } : x));
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update follow-up.');
+    }
+  }
+
+  async function handleDeleteFollowUp(f: FollowUp) {
+    try {
+      await window.electronAPI.customers.deleteFollowUp(f.id);
+      followUps = followUps.filter((x) => x.id !== f.id);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete follow-up.');
+    }
+  }
+
+  function bookingsFor(c: Customer | null): Booking[] {
+    if (!c) return [];
+    return allBookings
+      .filter((b) => b.customer_name.trim().toLowerCase() === c.name.trim().toLowerCase() && b.status !== 'CANCELLED')
+      .sort((a, b) => b.event_date.localeCompare(a.event_date));
   }
 
   onMount(fetchCustomers);
+
+  $: selectedCustomerBookings = bookingsFor(selectedCustomer);
 
   $: filteredCustomers = customers.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -209,14 +251,7 @@
           <Input id="c-addr" bind:value={address} />
         </div>
 
-        <div>
-          <label for="c-tier" class="block text-slate-300 font-semibold mb-1">Loyalty Tier</label>
-          <select id="c-tier" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-slate-100 text-xs" bind:value={tier}>
-            <option value="New">New Client</option>
-            <option value="Regular">Regular Client</option>
-            <option value="VIP">VIP Client</option>
-          </select>
-        </div>
+        <p class="text-[10px] text-slate-500">Loyalty tier is calculated automatically from confirmed bookings — new clients start at "New".</p>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
           <Button variant="secondary" size="sm" type="button" on:click={() => (showAddModal = false)}>Cancel</Button>
@@ -229,14 +264,14 @@
 
 <!-- Sliding Customer Profile Side Drawer (Right Side Panel) -->
 {#if showProfileDrawer && selectedCustomer}
-  <!-- Backdrop Mask Overlay -->
+  <!-- Backdrop Mask Overlay (Solid Semi-Transparent - No Blur) -->
   <div
-    class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 animate-fade-in cursor-pointer"
+    class="fixed inset-0 bg-slate-950/75 z-50 animate-fade-in cursor-pointer"
     on:click={() => (showProfileDrawer = false)}
   ></div>
 
-  <!-- Right Slide-In Side Drawer Container -->
-  <aside class="fixed inset-y-0 right-0 w-full sm:w-[420px] bg-slate-950 border-l-2 border-rose-500/50 shadow-2xl z-50 flex flex-col justify-between p-6 space-y-6 animate-fade-in select-none">
+  <!-- Right Slide-In Side Drawer Container with Smooth Right-to-Left Slide Animation -->
+  <aside class="fixed inset-y-0 right-0 w-full sm:w-[420px] bg-slate-950 border-l-2 border-rose-500/50 shadow-2xl z-50 flex flex-col justify-between p-6 space-y-6 animate-slide-in-right select-none">
     <div class="space-y-5 overflow-y-auto pr-1">
       <!-- Drawer Header & Close Button -->
       <div class="flex items-center justify-between border-b border-slate-800 pb-4">
@@ -289,45 +324,66 @@
       <!-- Customer CRM Financial & Event History Summary -->
       <Card className="space-y-3 p-4 border-l-4 border-l-emerald-500">
         <h4 class="font-extrabold text-slate-100 text-xs uppercase tracking-wider">Catering Order History</h4>
-        
+
         <div class="grid grid-cols-2 gap-2 text-center text-xs">
           <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
             <span class="text-[10px] text-slate-400 uppercase font-semibold block">Total Events</span>
-            <span class="text-base font-extrabold text-slate-100">3 Bookings</span>
+            <span class="text-base font-extrabold text-slate-100">{selectedCustomer.total_bookings ?? 0} Bookings</span>
           </div>
 
           <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-            <span class="text-[10px] text-slate-400 uppercase font-semibold block">Total Sales</span>
-            <span class="text-base font-extrabold text-emerald-400">₱245,000</span>
+            <span class="text-[10px] text-slate-400 uppercase font-semibold block">Total Paid</span>
+            <span class="text-base font-extrabold text-emerald-400">₱{(selectedCustomer.total_spent ?? 0).toLocaleString()}</span>
           </div>
-        </div>
-
-        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs space-y-1.5 font-mono">
-          <p class="text-[11px] font-bold text-slate-300">Favorite Menu Package:</p>
-          <p class="text-emerald-400 font-bold">Executive Grand Buffet (200 pax)</p>
         </div>
       </Card>
 
       <!-- Client Recent Bookings Table -->
       <Card className="space-y-3 p-4">
         <h4 class="font-extrabold text-slate-100 text-xs uppercase tracking-wider">Recent Reservations</h4>
-        
-        <div class="space-y-2 text-xs">
-          <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
-            <div>
-              <span class="font-bold text-slate-100 block">Wedding Reception</span>
-              <span class="text-[10px] text-slate-400">Sep 12, 2026 • Waterfront Hotel</span>
-            </div>
-            <Badge variant="green">CONFIRMED</Badge>
-          </div>
 
-          <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
-            <div>
-              <span class="font-bold text-slate-100 block">Birthday Party</span>
-              <span class="text-[10px] text-slate-400">Aug 28, 2026 • Marco Polo</span>
-            </div>
-            <Badge variant="green">CONFIRMED</Badge>
-          </div>
+        <div class="space-y-2 text-xs">
+          {#if selectedCustomerBookings.length === 0}
+            <p class="text-slate-500 text-center py-3">No bookings found for this customer.</p>
+          {:else}
+            {#each selectedCustomerBookings as b (b.id)}
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center">
+                <div>
+                  <span class="font-bold text-slate-100 block">{b.occasion}</span>
+                  <span class="text-[10px] text-slate-400">{b.event_date} • {b.venue}</span>
+                </div>
+                <Badge variant={b.status === 'CONFIRMED' || b.status === 'COMPLETED' ? 'green' : 'blue'}>{b.status}</Badge>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </Card>
+
+      <!-- Follow-Ups Panel -->
+      <Card className="space-y-3 p-4 border-l-4 border-l-amber-500">
+        <h4 class="font-extrabold text-slate-100 text-xs uppercase tracking-wider">Follow-Ups</h4>
+
+        <div class="space-y-2 text-xs">
+          {#if followUps.length === 0}
+            <p class="text-slate-500 text-center py-2">No follow-ups scheduled.</p>
+          {:else}
+            {#each followUps as f (f.id)}
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2">
+                <input type="checkbox" checked={f.is_done} class="rounded bg-slate-900 border-slate-700 text-emerald-500 cursor-pointer" on:change={() => handleToggleFollowUp(f)} />
+                <div class="flex-1">
+                  <span class="block font-semibold {f.is_done ? 'line-through text-slate-500' : 'text-slate-200'}">{f.note || 'Follow-up'}</span>
+                  <span class="text-[10px] text-slate-400">{f.follow_up_date}</span>
+                </div>
+                <button class="text-slate-600 hover:text-red-400" on:click={() => handleDeleteFollowUp(f)}>x</button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        <div class="flex gap-2 pt-2 border-t border-slate-800">
+          <Input type="date" bind:value={newFollowUpDate} className="flex-shrink-0 w-32" />
+          <Input bind:value={newFollowUpNote} placeholder="Note (optional)" className="flex-1" />
+          <Button size="sm" type="button" on:click={handleAddFollowUp}>Add</Button>
         </div>
       </Card>
     </div>
@@ -337,7 +393,7 @@
       <Button variant="secondary" className="w-1/2" on:click={() => (showProfileDrawer = false)}>
         Close Drawer
       </Button>
-      <Button className="w-1/2" on:click={() => alert(`Creating new booking reservation for ${selectedCustomer?.name}`)}>
+      <Button className="w-1/2" on:click={() => toast.info(`Creating new booking reservation for ${selectedCustomer?.name}`)}>
         + New Booking
       </Button>
     </div>
@@ -347,3 +403,17 @@
 <!-- Import / Export Modals -->
 <ImportWizardModal show={showImportModal} defaultEntity="customers" onClose={() => (showImportModal = false)} />
 <ExportWizardModal show={showExportModal} defaultEntity="customers" onClose={() => (showExportModal = false)} />
+
+<style>
+  @keyframes slideInRight {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+  .animate-slide-in-right {
+    animation: slideInRight 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+</style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
@@ -25,113 +26,241 @@
   let showExportModal = false;
   let importDefaultEntity = 'all_in_one';
 
-  // Business Profile
-  let businessName = "Jayraldine's Catering Services";
-  let tagline = "Quality Catering & Event Management";
-  let contact = "+63 912 345 6789";
-  let email = "admin@jayraldines.com";
-  let address = "123 Rizal St., Cebu City, Philippines";
+  // Business Profile (real, persisted to business_info table)
+  let businessName = '';
+  let tagline = 'Quality Catering & Event Management';
+  let contact = '';
+  let email = '';
+  let address = '';
+  let settingsLoading = true;
 
-  // Policy Settings
-  let minDownpaymentPct = 30;
-  let allowZeroDp = false;
+  // Policy Settings (also persisted to business_info)
+  let minDownpaymentPct = 20;
+  let allowZeroDp = true;
   let maxDailyPax = 600;
 
-  // Monthly Sales Targets
-  let targetYear = "2026";
-  let universalTarget = 85000;
-  let monthlyTargets: Record<string, number> = {
-    Jan: 85000, Feb: 85000, Mar: 85000, Apr: 85000, May: 95000, Jun: 110000,
-    Jul: 85000, Aug: 120000, Sep: 95000, Oct: 85000, Nov: 100000, Dec: 150000
-  };
+  async function loadBusinessInfo() {
+    settingsLoading = true;
+    try {
+      const info = await window.electronAPI.settings.getBusinessInfo();
+      businessName = info.name;
+      contact = info.contact;
+      email = info.email;
+      address = info.address;
+      minDownpaymentPct = info.min_downpayment_pct;
+      allowZeroDp = info.allow_zero_downpayment;
+      maxDailyPax = info.max_daily_pax;
+      smtpHost = info.smtp_host;
+      smtpPort = info.smtp_port;
+      smtpUser = info.smtp_user;
+      smtpPass = info.smtp_pass;
+    } catch (e) {
+      console.error('[Settings] Failed to load business info:', e);
+    } finally {
+      settingsLoading = false;
+    }
+  }
 
-  // Occasions list
-  let occasions = [
-    'Wedding Reception',
-    'Birthday Party',
-    'Corporate Event',
-    'Anniversary',
-    'Fiesta & Thanksgiving',
-    'Reunion',
-    'Debut (18th Birthday)'
-  ];
+  // Monthly Sales Targets (real, persisted to monthly_sales_targets table)
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let targetYear = String(new Date().getFullYear());
+  let universalTarget = 85000;
+  let monthlyTargets: Record<string, number> = Object.fromEntries(MONTH_NAMES.map((m) => [m, 0]));
+
+  async function loadSalesTargets() {
+    try {
+      const targets = await window.electronAPI.settings.getSalesTargets(Number(targetYear));
+      const next = Object.fromEntries(MONTH_NAMES.map((m) => [m, 0]));
+      for (const t of targets) {
+        next[MONTH_NAMES[t.month - 1]] = t.target_amount;
+      }
+      monthlyTargets = next;
+    } catch (e) {
+      console.error('[Settings] Failed to load sales targets:', e);
+    }
+  }
+
+  // Occasions list (real, persisted to occasions table)
+  let occasions: { id: number; name: string }[] = [];
   let newOccasionName = '';
 
-  // SMTP Email Settings
-  let smtpHost = 'smtp.gmail.com';
-  let smtpPort = 587;
-  let smtpUser = 'admin@jayraldines.com';
-  let smtpPass = '••••••••••••';
+  async function loadOccasions() {
+    try {
+      occasions = await window.electronAPI.settings.getOccasions();
+    } catch (e) {
+      console.error('[Settings] Failed to load occasions:', e);
+    }
+  }
 
-  // System Audit Logs
-  let auditLogs = [
-    { timestamp: '2026-08-24 19:45:10', user: 'owner', action: 'CREATE_BOOKING', details: 'Created booking BK-2026-088 for Maria Santos (₱120,000)' },
-    { timestamp: '2026-08-24 18:30:22', user: 'owner', action: 'RECORD_EXPENSE', details: 'Added expense record for Carbon Market Meat (₱12,500)' },
-    { timestamp: '2026-08-24 16:15:05', user: 'owner', action: 'SYSTEM_BACKUP', details: 'Manual database backup created: backup_20260824.db' },
-    { timestamp: '2026-08-24 14:00:00', user: 'system', action: 'MIGRATION_RUN', details: 'Database schema migrations verified at v3' }
-  ];
+  // SMTP Email Settings (real, persisted to business_info table)
+  let smtpHost = '';
+  let smtpPort = 587;
+  let smtpUser = '';
+  let smtpPass = '';
+  let testingSmtp = false;
+
+  // System Audit Logs (real, persisted to audit_logs table)
+  let auditLogs: { id: number; actor: string; action: string; table_name: string; details: string; created_at: string }[] = [];
+
+  async function loadAuditLogs() {
+    try {
+      auditLogs = await window.electronAPI.audit.getRecent(50);
+    } catch (e) {
+      console.error('[Settings] Failed to load audit logs:', e);
+    }
+  }
 
   function openImportWizard(entity: string = 'all_in_one') {
     importDefaultEntity = entity;
     showImportModal = true;
   }
 
-  function applyUniversalTarget() {
+  async function applyUniversalTarget() {
     Object.keys(monthlyTargets).forEach(m => {
       monthlyTargets[m] = universalTarget;
     });
     monthlyTargets = { ...monthlyTargets };
-  }
-
-  function addOccasion() {
-    if (newOccasionName.trim()) {
-      occasions = [...occasions, newOccasionName.trim()];
-      newOccasionName = '';
+    try {
+      await window.electronAPI.settings.setYearlyTarget(Number(targetYear), universalTarget);
+      toast.success(`Universal target of ₱${universalTarget.toLocaleString()} applied to all months of ${targetYear}!`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to apply universal target.');
     }
   }
 
-  function removeOccasion(idx: number) {
-    occasions = occasions.filter((_, i) => i !== idx);
+  async function addOccasion() {
+    if (!newOccasionName.trim()) return;
+    try {
+      const created = await window.electronAPI.settings.addOccasion(newOccasionName.trim());
+      occasions = [...occasions, created];
+      newOccasionName = '';
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to add occasion.');
+    }
   }
 
-  function saveBusinessProfile() {
-    alert("Business information saved successfully!");
+  async function removeOccasion(occ: { id: number; name: string }) {
+    try {
+      await window.electronAPI.settings.deleteOccasion(occ.id);
+      occasions = occasions.filter((o) => o.id !== occ.id);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete occasion.');
+    }
   }
 
-  function savePolicy() {
-    alert("Booking policy and capacity limits updated!");
+  async function saveBusinessProfile() {
+    try {
+      await window.electronAPI.settings.updateBusinessInfo({
+        name: businessName,
+        address,
+        contact,
+        email,
+        min_downpayment_pct: minDownpaymentPct,
+        allow_zero_downpayment: allowZeroDp,
+        max_daily_pax: maxDailyPax,
+        smtp_host: smtpHost,
+        smtp_port: smtpPort,
+        smtp_user: smtpUser,
+        smtp_pass: smtpPass,
+      });
+      toast.success('Business information saved successfully!');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save business profile.');
+    }
   }
 
-  function saveSalesTargets() {
-    alert(`Monthly sales targets for ${targetYear} saved!`);
+  async function savePolicy() {
+    try {
+      await window.electronAPI.settings.updateBusinessInfo({
+        name: businessName,
+        address,
+        contact,
+        email,
+        min_downpayment_pct: minDownpaymentPct,
+        allow_zero_downpayment: allowZeroDp,
+        max_daily_pax: maxDailyPax,
+        smtp_host: smtpHost,
+        smtp_port: smtpPort,
+        smtp_user: smtpUser,
+        smtp_pass: smtpPass,
+      });
+      toast.success('Booking policy and capacity limits updated!');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save policy settings.');
+    }
   }
 
-  function saveSmtpConfig() {
-    alert("Email SMTP configuration saved!");
-  }
-
-  function createDatabaseBackup() {
-    const fileName = `jayraldines_backup_${new Date().toISOString().slice(0,10)}.db`;
-    const blob = new Blob(["SQLite format 3\0..."], { type: "application/x-sqlite3" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    alert(`Database Backup ${fileName} created and saved to your computer!`);
-  }
-
-  function restoreDatabaseBackup() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.db,.sqlite,.sql';
-    input.onchange = (e: any) => {
-      if (e.target.files && e.target.files[0]) {
-        alert(`Database restored successfully from ${e.target.files[0].name}!`);
+  async function saveSalesTargets() {
+    try {
+      for (let i = 0; i < MONTH_NAMES.length; i++) {
+        await window.electronAPI.settings.setSalesTarget(Number(targetYear), i + 1, monthlyTargets[MONTH_NAMES[i]] || 0);
       }
-    };
-    input.click();
+      toast.success(`Monthly sales targets for ${targetYear} saved!`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save sales targets.');
+    }
+  }
+
+  async function saveSmtpConfig() {
+    try {
+      await window.electronAPI.settings.updateBusinessInfo({
+        name: businessName,
+        address,
+        contact,
+        email,
+        min_downpayment_pct: minDownpaymentPct,
+        allow_zero_downpayment: allowZeroDp,
+        max_daily_pax: maxDailyPax,
+        smtp_host: smtpHost,
+        smtp_port: smtpPort,
+        smtp_user: smtpUser,
+        smtp_pass: smtpPass,
+      });
+      toast.success('Email SMTP configuration saved!');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save SMTP configuration.');
+    }
+  }
+
+  async function testSmtpConnection() {
+    testingSmtp = true;
+    try {
+      await saveSmtpConfig();
+      const result = await window.electronAPI.settings.testSmtp();
+      if (result.success) {
+        toast.success('SMTP connection test successful!');
+      } else {
+        toast.error(`SMTP connection failed: ${result.error}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'SMTP test failed.');
+    } finally {
+      testingSmtp = false;
+    }
+  }
+
+  async function createDatabaseBackup() {
+    try {
+      const result = await window.electronAPI.settings.backupDatabase();
+      if (result.success) {
+        toast.success(`Database backup created at:\n${result.path}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to create backup.');
+    }
+  }
+
+  async function restoreDatabaseBackup() {
+    if (!confirm('Restoring will overwrite the current database with the selected backup file. The app will need to restart. Continue?')) return;
+    try {
+      const result = await window.electronAPI.settings.restoreDatabase();
+      if (result.success && result.requiresRestart) {
+        toast.success('Database restored successfully. The app will now restart.');
+        await window.electronAPI.relaunch();
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to restore backup.');
+    }
   }
 
   // Daily Log Viewer State
@@ -156,11 +285,17 @@
     if (window.electronAPI && window.electronAPI.logs) {
       window.electronAPI.logs.openLogFolder();
     } else {
-      alert(`Daily Log File Location: ${activeLogPath}`);
+      toast.info(`Daily Log File Location: ${activeLogPath}`);
     }
   }
 
-  onMount(fetchDailyLogInfo);
+  onMount(() => {
+    fetchDailyLogInfo();
+    loadBusinessInfo();
+    loadOccasions();
+    loadSalesTargets();
+    loadAuditLogs();
+  });
 </script>
 
 <div class="p-6 space-y-6 animate-fade-in overflow-y-auto max-h-[calc(100vh-4rem)]">
@@ -349,7 +484,7 @@
           <h4 class="font-bold text-slate-100 text-sm">Monthly Sales Target Configuration</h4>
           <p class="text-[11px] text-slate-400">Revenue target used for evaluation</p>
         </div>
-        <select class="bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-200" bind:value={targetYear}>
+        <select class="bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-xs text-slate-200" bind:value={targetYear} on:change={loadSalesTargets}>
           <option value="2026">Year 2026</option>
           <option value="2025">Year 2025</option>
         </select>
@@ -391,10 +526,10 @@
         </div>
 
         <div class="max-h-36 overflow-y-auto space-y-1.5 pr-1">
-          {#each occasions as occ, idx}
+          {#each occasions as occ (occ.id)}
             <div class="flex justify-between items-center p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200">
-              <span>{occ}</span>
-              <button class="text-red-400 hover:text-red-300 font-bold" on:click={() => removeOccasion(idx)}>✕</button>
+              <span>{occ.name}</span>
+              <button class="text-red-400 hover:text-red-300 font-bold" on:click={() => removeOccasion(occ)}>✕</button>
             </div>
           {/each}
         </div>
@@ -456,7 +591,7 @@
         </div>
 
         <div class="flex justify-between pt-1">
-          <Button variant="outline" size="sm" on:click={() => alert("SMTP connection test successful!")}>Test Connection</Button>
+          <Button variant="outline" size="sm" disabled={testingSmtp} on:click={testSmtpConnection}>{testingSmtp ? 'Testing...' : 'Test Connection'}</Button>
           <Button size="sm" on:click={saveSmtpConfig}>Save SMTP Config</Button>
         </div>
       </div>
@@ -503,15 +638,19 @@
       </div>
 
       <div class="max-h-40 overflow-y-auto space-y-2 pr-1 text-[11px] font-mono">
-        {#each auditLogs as log}
-          <div class="p-2 rounded-lg bg-slate-950 border border-slate-800 space-y-0.5">
-            <div class="flex justify-between text-slate-400">
-              <span>{log.timestamp}</span>
-              <span class="text-emerald-400 font-bold">{log.action}</span>
+        {#if auditLogs.length === 0}
+          <p class="text-slate-500 text-center py-4">No audit events yet.</p>
+        {:else}
+          {#each auditLogs as log (log.id)}
+            <div class="p-2 rounded-lg bg-slate-950 border border-slate-800 space-y-0.5">
+              <div class="flex justify-between text-slate-400">
+                <span>{log.created_at}</span>
+                <span class="text-emerald-400 font-bold">{log.action}</span>
+              </div>
+              <p class="text-slate-200">{log.details}</p>
             </div>
-            <p class="text-slate-200">{log.details}</p>
-          </div>
-        {/each}
+          {/each}
+        {/if}
       </div>
     </Card>
   </div>

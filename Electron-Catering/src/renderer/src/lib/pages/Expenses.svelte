@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
   import type { Expense } from '../../../preload/types';
   import Card from '$lib/components/ui/Card.svelte';
@@ -44,14 +45,14 @@
       }
     } catch (e) {
       console.error(e);
-    } fontFinally: {
+    } finally {
       loading = false;
     }
   }
 
   async function handleAddExpense() {
     if (!description.trim() || amount <= 0) {
-      return alert('Please enter valid description and positive amount');
+      return toast.error('Please enter valid description and positive amount');
     }
 
     const newExp: Omit<Expense, 'id'> = {
@@ -72,9 +73,9 @@
       showAddModal = false;
       description = '';
       amount = 0;
-      alert('Expense recorded successfully!');
+      toast.success('Expense recorded successfully!');
     } catch (e) {
-      alert(`Failed to add expense: ${e}`);
+      toast.error(`Failed to add expense: ${e}`);
     }
   }
 

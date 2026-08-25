@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
+  import * as XLSX from 'xlsx';
   import Card from '$lib/components/ui/Card.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
@@ -9,14 +11,41 @@
 
   let exportEntity = defaultEntity;
   let exportFormat = 'xlsx';
-  let dateRange = 'all';
+  let exporting = false;
 
-  function handleExport() {
-    const fileName = `Jayraldines_Catering_${exportEntity.toUpperCase()}_Export.${exportFormat}`;
-    
-    // Generate sample data blob for export
-    const sampleText = `Jayraldine's Catering ${exportEntity} Export\nGenerated: ${new Date().toLocaleString()}\n`;
-    const blob = new Blob([sampleText], { type: exportFormat === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv' });
+  async function fetchEntityRows(entity: string): Promise<{ sheetName: string; rows: any[] }[]> {
+    const api = window.electronAPI;
+    switch (entity) {
+      case 'bookings':
+        return [{ sheetName: 'Bookings', rows: await api.bookings.getAll() }];
+      case 'customers':
+        return [{ sheetName: 'Customers', rows: await api.customers.getAll() }];
+      case 'expenses':
+        return [{ sheetName: 'Expenses', rows: await api.expenses.getAll() }];
+      case 'billing':
+        return [{ sheetName: 'Invoices', rows: await api.invoices.getAll() }];
+      case 'cashflow':
+        return [{ sheetName: 'CashFlow', rows: await api.cashFlow.getAll() }];
+      case 'packages':
+        return [
+          { sheetName: 'Packages', rows: await api.packages.getAll() },
+          { sheetName: 'Dishes', rows: await api.menuItems.getAll() },
+        ];
+      case 'all':
+      default:
+        return [
+          { sheetName: 'Bookings', rows: await api.bookings.getAll() },
+          { sheetName: 'Customers', rows: await api.customers.getAll() },
+          { sheetName: 'Expenses', rows: await api.expenses.getAll() },
+          { sheetName: 'Invoices', rows: await api.invoices.getAll() },
+          { sheetName: 'CashFlow', rows: await api.cashFlow.getAll() },
+          { sheetName: 'Packages', rows: await api.packages.getAll() },
+          { sheetName: 'Dishes', rows: await api.menuItems.getAll() },
+        ];
+    }
+  }
+
+  function downloadBlob(blob: Blob, fileName: string) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -25,9 +54,51 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
 
-    alert(`Exported ${fileName} successfully!`);
-    onClose();
+  function toCsv(rows: any[]): string {
+    if (rows.length === 0) return '';
+    const headers = Object.keys(rows[0]);
+    const lines = [headers.join(',')];
+    for (const row of rows) {
+      lines.push(headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(','));
+    }
+    return lines.join('\n');
+  }
+
+  async function handleExport() {
+    exporting = true;
+    try {
+      const sheets = await fetchEntityRows(exportEntity);
+      const nonEmpty = sheets.filter((s) => s.rows.length > 0);
+      if (nonEmpty.length === 0) {
+        toast.info('No data found to export for this selection.');
+        return;
+      }
+
+      const fileBase = `Jayraldines_Catering_${exportEntity.toUpperCase()}_Export_${new Date().toISOString().slice(0, 10)}`;
+
+      if (exportFormat === 'xlsx') {
+        const wb = XLSX.utils.book_new();
+        for (const sheet of nonEmpty) {
+          const ws = XLSX.utils.json_to_sheet(sheet.rows);
+          XLSX.utils.book_append_sheet(wb, ws, sheet.sheetName.slice(0, 31));
+        }
+        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        downloadBlob(new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${fileBase}.xlsx`);
+      } else {
+        // CSV only supports one table — export the first (or only) sheet.
+        const csv = toCsv(nonEmpty[0].rows);
+        downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `${fileBase}.csv`);
+      }
+
+      toast.success(`Exported ${fileBase}.${exportFormat} successfully!`);
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.message || 'Export failed.');
+    } finally {
+      exporting = false;
+    }
   }
 </script>
 
@@ -46,7 +117,7 @@
         <div>
           <label for="exp-ent" class="block text-slate-300 font-semibold mb-1">Select Entity to Export</label>
           <select id="exp-ent" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-slate-100 text-xs font-semibold" bind:value={exportEntity}>
-            <option value="all">Master System Workbook (All Tables & Views)</option>
+            <option value="all">Master System Workbook (All Tables)</option>
             <option value="bookings">Bookings & Orders Core</option>
             <option value="customers">Customers Directory CRM</option>
             <option value="expenses">Operating Expenses Log</option>
@@ -66,21 +137,15 @@
               CSV Spreadsheet (.csv)
             </Button>
           </div>
-        </div>
-
-        <div>
-          <label for="exp-range" class="block text-slate-300 font-semibold mb-1">Date Period Filter</label>
-          <select id="exp-range" class="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-slate-100 text-xs" bind:value={dateRange}>
-            <option value="all">All Historical Records</option>
-            <option value="this_month">This Month (August 2026)</option>
-            <option value="year_to_date">Year to Date (2026)</option>
-          </select>
+          {#if exportFormat === 'csv' && exportEntity === 'all'}
+            <p class="text-[10px] text-amber-400 mt-1">CSV supports one table at a time — this will export Bookings only. Use Excel for all tables.</p>
+          {/if}
         </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
-        <Button variant="secondary" size="sm" on:click={onClose}>Cancel</Button>
-        <Button size="sm" on:click={handleExport}>Download Export File</Button>
+        <Button variant="secondary" size="sm" disabled={exporting} on:click={onClose}>Cancel</Button>
+        <Button size="sm" disabled={exporting} on:click={handleExport}>{exporting ? 'Exporting...' : 'Download Export File'}</Button>
       </div>
     </Card>
   </div>

@@ -1,7 +1,6 @@
 import sqlite3 from 'sqlite3';
 import fs from 'fs';
 import path from 'path';
-import type Database from 'better-sqlite3';
 import { queryAll, queryRun } from '../database/connection';
 
 export interface MigrationSummary {
@@ -34,9 +33,9 @@ export class MigrationToolService {
 
     // 2. Open Legacy Database in Read-Only mode
     const legacyDb = await new Promise<sqlite3.Database>((resolve, reject) => {
-      const db = new sqlite3.Database(legacyDbPath, sqlite3.OPEN_READONLY, (err) => {
+      const d = new sqlite3.Database(legacyDbPath, sqlite3.OPEN_READONLY, (err) => {
         if (err) reject(err);
-        else resolve(db);
+        else resolve(d);
       });
     });
 

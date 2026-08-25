@@ -18,6 +18,9 @@ export default defineConfig({
           build: {
             outDir: path.resolve(__dirname, 'dist-electron/main'),
             rollupOptions: {
+              // sqlite3 loads a native .node binary via an internal require() call —
+              // it must stay external (unbundled) so that require() still exists at runtime,
+              // instead of being inlined into Vite's ES-module output for the main process.
               external: ['electron', 'sqlite3'],
             },
           },
@@ -28,6 +31,12 @@ export default defineConfig({
         vite: {
           build: {
             outDir: path.resolve(__dirname, 'dist-electron/preload'),
+            rollupOptions: {
+              output: {
+                format: 'cjs',
+                entryFileNames: 'index.cjs',
+              },
+            },
           },
         },
       },

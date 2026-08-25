@@ -17,4 +17,20 @@ export class PackageService {
     }
     return this.packageRepo.create(data);
   }
+
+  async deletePackage(id: number): Promise<boolean> {
+    return this.packageRepo.delete(id);
+  }
+
+  async getItemIdsForPackage(packageId: number): Promise<number[]> {
+    return this.packageRepo.getItemIdsForPackage(packageId);
+  }
+
+  async getItemCounts(): Promise<Record<number, number>> {
+    return this.packageRepo.getItemCounts();
+  }
+
+  async setItemsForPackage(packageId: number, itemIds: number[]): Promise<void> {
+    return this.packageRepo.setItemsForPackage(packageId, itemIds);
+  }
 }

@@ -1,22 +1,14 @@
 <script lang="ts">
+  import { toast } from '$lib/stores/toast';
   import { onMount } from 'svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
+  import type { CashFlowEntry } from '../../../../preload/types';
 
-  interface LedgerEntry {
-    id: number;
-    date: string;
-    ref_no: string;
-    particulars: string;
-    type: 'Inflow' | 'Outflow';
-    inflow: number;
-    outflow: number;
-    running_balance: number;
-  }
-
-  let ledger: LedgerEntry[] = [];
+  let ledger: CashFlowEntry[] = [];
+  let loading = true;
 
   // Add Cash Entry Modal state
   let showAddModal = false;
@@ -25,59 +17,60 @@
   let particulars = '';
   let amount = 0;
   let date = new Date().toISOString().split('T')[0];
+  let saving = false;
 
-  onMount(() => {
-    // Initial sample cash flow ledger matching legacy Python app
-    const initialRaw: Omit<LedgerEntry, 'running_balance'>[] = [
-      { id: 1, date: '2026-08-01', ref_no: 'BAL-FWD', particulars: 'Opening Cash Balance Carried Forward', type: 'Inflow', inflow: 150000, outflow: 0 },
-      { id: 2, date: '2026-08-05', ref_no: 'PMT-001', particulars: '50% Downpayment — Maria Santos (Wedding)', type: 'Inflow', inflow: 65000, outflow: 0 },
-      { id: 3, date: '2026-08-10', ref_no: 'EXP-088', particulars: 'Pork Belly & Meat Ingredients (Carbon Market)', type: 'Outflow', inflow: 0, outflow: 12500 },
-      { id: 4, date: '2026-08-15', ref_no: 'PMT-002', particulars: 'Deposit Payment — Juan Dela Cruz (Birthday)', type: 'Inflow', inflow: 15000, outflow: 0 },
-      { id: 5, date: '2026-08-20', ref_no: 'EXP-092', particulars: 'Kitchen Assistant Payroll & Waiters Allowance', type: 'Outflow', inflow: 0, outflow: 6400 }
-    ];
-
-    recalculateLedger(initialRaw);
-  });
-
-  function recalculateLedger(entries: Omit<LedgerEntry, 'running_balance'>[]) {
-    let currentBalance = 0;
-    ledger = entries.map(e => {
-      currentBalance += (e.inflow - e.outflow);
-      return {
-        ...e,
-        running_balance: currentBalance
-      };
-    });
+  async function loadLedger() {
+    loading = true;
+    try {
+      ledger = await window.electronAPI.cashFlow.getAll();
+    } catch (e) {
+      console.error('[CashFlow] Failed to load ledger:', e);
+    } finally {
+      loading = false;
+    }
   }
 
-  function handleAddCashEntry() {
+  onMount(loadLedger);
+
+  async function handleAddCashEntry() {
     if (!particulars.trim() || amount <= 0) {
-      return alert('Please enter valid description and positive amount');
+      return toast.error('Please enter valid description and positive amount');
     }
 
-    const autoRef = refNo.trim() || (entryType === 'Inflow' ? `DEP-${Math.floor(100 + Math.random() * 900)}` : `EXP-${Math.floor(100 + Math.random() * 900)}`);
-    const newEntry: Omit<LedgerEntry, 'running_balance'> = {
-      id: Date.now(),
-      date,
-      ref_no: autoRef,
-      particulars,
-      type: entryType,
-      inflow: entryType === 'Inflow' ? amount : 0,
-      outflow: entryType === 'Outflow' ? amount : 0
-    };
+    saving = true;
+    try {
+      ledger = await window.electronAPI.cashFlow.create({
+        date,
+        ref_no: refNo.trim() || undefined,
+        particulars: particulars.trim(),
+        deposit: entryType === 'Inflow' ? amount : 0,
+        withdrawal: entryType === 'Outflow' ? amount : 0,
+      });
 
-    const updatedRaw = [...ledger.map(({ running_balance, ...rest }) => rest), newEntry];
-    recalculateLedger(updatedRaw);
-
-    showAddModal = false;
-    particulars = '';
-    amount = 0;
-    refNo = '';
-    alert(`Cash Flow entry recorded successfully! New Running Balance: ₱${ledger[ledger.length - 1].running_balance.toLocaleString()}`);
+      showAddModal = false;
+      const newBalance = ledger.length ? ledger[ledger.length - 1].running_balance : 0;
+      particulars = '';
+      amount = 0;
+      refNo = '';
+      toast.success(`Cash Flow entry recorded successfully! New Running Balance: ₱${newBalance.toLocaleString()}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to record cash entry.');
+    } finally {
+      saving = false;
+    }
   }
 
-  $: totalInflow = ledger.reduce((sum, e) => sum + e.inflow, 0);
-  $: totalOutflow = ledger.reduce((sum, e) => sum + e.outflow, 0);
+  async function handleDeleteEntry(entry: CashFlowEntry) {
+    if (!confirm(`Delete entry "${entry.particulars}"?`)) return;
+    try {
+      ledger = await window.electronAPI.cashFlow.delete(entry.id);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete entry.');
+    }
+  }
+
+  $: totalInflow = ledger.reduce((sum, e) => sum + e.deposit, 0);
+  $: totalOutflow = ledger.reduce((sum, e) => sum + e.withdrawal, 0);
   $: netSurplus = totalInflow - totalOutflow;
 </script>
 
@@ -115,10 +108,9 @@
       </div>
 
       <div class="flex items-center gap-2">
-        <Button variant="outline" size="sm">Export Ledger Excel</Button>
         <Button size="sm" on:click={() => (showAddModal = true)}>
           <img src="assets/icons/svg/plus.svg" alt="" class="w-3.5 h-3.5 filter invert brightness-200" />
-          <span>+ Record Cash Entry</span>
+          <span>Record Cash Entry</span>
         </Button>
       </div>
     </div>
@@ -134,30 +126,40 @@
             <th class="py-3 px-2 text-right">Outflow / Expense</th>
             <th class="py-3 px-2 text-right">Running Cash Balance</th>
             <th class="py-3 px-2 text-center">Type</th>
+            <th class="py-3 px-2 text-right">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-800/60">
-          {#each ledger as entry}
-            <tr class="hover:bg-slate-800/40 transition-colors">
-              <td class="py-3 px-2 text-slate-300 font-medium">{entry.date}</td>
-              <td class="py-3 px-2 font-mono text-emerald-400">{entry.ref_no}</td>
-              <td class="py-3 px-2 text-slate-200 font-medium">{entry.particulars}</td>
-              <td class="py-3 px-2 text-right font-semibold text-emerald-400">
-                {entry.inflow > 0 ? `₱${entry.inflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
-              </td>
-              <td class="py-3 px-2 text-right font-semibold text-red-400">
-                {entry.outflow > 0 ? `₱${entry.outflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
-              </td>
-              <td class="py-3 px-2 text-right font-bold text-slate-100">
-                ₱{entry.running_balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </td>
-              <td class="py-3 px-2 text-center">
-                <Badge variant={entry.type === 'Inflow' ? 'green' : 'destructive'}>
-                  {entry.type}
-                </Badge>
-              </td>
-            </tr>
-          {/each}
+          {#if loading}
+            <tr><td colspan="8" class="py-6 text-center text-slate-500">Loading ledger...</td></tr>
+          {:else if ledger.length === 0}
+            <tr><td colspan="8" class="py-6 text-center text-slate-500">No cash flow entries yet.</td></tr>
+          {:else}
+            {#each ledger as entry (entry.id)}
+              <tr class="hover:bg-slate-800/40 transition-colors">
+                <td class="py-3 px-2 text-slate-300 font-medium">{entry.date}</td>
+                <td class="py-3 px-2 font-mono text-emerald-400">{entry.ref_no || '—'}</td>
+                <td class="py-3 px-2 text-slate-200 font-medium">{entry.particulars}</td>
+                <td class="py-3 px-2 text-right font-semibold text-emerald-400">
+                  {entry.deposit > 0 ? `₱${entry.deposit.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
+                </td>
+                <td class="py-3 px-2 text-right font-semibold text-red-400">
+                  {entry.withdrawal > 0 ? `₱${entry.withdrawal.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}
+                </td>
+                <td class="py-3 px-2 text-right font-bold text-slate-100">
+                  ₱{entry.running_balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </td>
+                <td class="py-3 px-2 text-center">
+                  <Badge variant={entry.deposit > 0 ? 'green' : 'destructive'}>
+                    {entry.deposit > 0 ? 'Inflow' : 'Outflow'}
+                  </Badge>
+                </td>
+                <td class="py-3 px-2 text-right">
+                  <button class="text-slate-600 hover:text-red-400 text-xs" on:click={() => handleDeleteEntry(entry)}>Delete</button>
+                </td>
+              </tr>
+            {/each}
+          {/if}
         </tbody>
       </table>
     </div>
@@ -203,8 +205,8 @@
         </div>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-          <Button variant="secondary" size="sm" type="button" on:click={() => (showAddModal = false)}>Cancel</Button>
-          <Button size="sm" type="submit">Record Cash Entry</Button>
+          <Button variant="secondary" size="sm" type="button" disabled={saving} on:click={() => (showAddModal = false)}>Cancel</Button>
+          <Button size="sm" type="submit" disabled={saving}>{saving ? 'Saving...' : 'Record Cash Entry'}</Button>
         </div>
       </form>
     </Card>
