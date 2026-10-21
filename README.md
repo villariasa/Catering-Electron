@@ -1,4 +1,4 @@
-# Jayraldine's Catering Management System — Desktop Edition
+# <img src="icons/sparkles.svg" width="28" height="28" align="center" /> Jayraldine's Catering Management System — Desktop Edition
 
 <div align="center">
 
@@ -19,17 +19,17 @@ Built with Svelte 5 runes and Electron, offering booking lifecycle management, i
 
 ---
 
-## 🌟 Key Highlights
+## <img src="icons/bolt.svg" width="22" height="22" align="center" /> Key Highlights
 
-- **Desktop-Native Speed & Offline Resilience:** Powered by Electron 34 and an embedded SQLite database engine; works reliably with zero internet connection.
-- **Modern Svelte 5 Frontend:** Reactive, fine-grained UI powered by Svelte 5 Runes (`$state`, `$derived`, `$effect`) and Vite 6 for instant hot-module replacement.
-- **Smart Catering Assistant:** Integrated Google Generative AI (`@google/generative-ai`) assistant (Chef Jay Mascot) for meal planning, package suggestions, and dish cost estimations.
-- **Automated Billing & Reporting:** Native PDF invoice and contract generation via `pdf-lib`, Excel data export using `xlsx`, and automated customer email confirmations via `nodemailer`.
-- **Packaging & Deployment:** Cross-platform packaging using `electron-builder` producing portable Windows installers and Linux executables.
+- <img src="icons/shield-check.svg" width="16" height="16" align="center" /> **Desktop-Native Speed & Offline Resilience** — Powered by Electron 34 and an embedded SQLite database engine; operates reliably with zero internet connection.
+- <img src="icons/sparkles.svg" width="16" height="16" align="center" /> **Modern Svelte 5 Frontend** — Reactive, fine-grained UI powered by Svelte 5 Runes (`$state`, `$derived`, `$effect`) and Vite 6 for instant hot-module replacement.
+- <img src="icons/cpu-chip.svg" width="16" height="16" align="center" /> **Smart Catering Assistant** — Integrated Google Generative AI (`@google/generative-ai`) assistant (Chef Jay Mascot) for meal planning, package suggestions, and dish cost estimations.
+- <img src="icons/receipt-percent.svg" width="16" height="16" align="center" /> **Automated Billing & Reporting** — Native PDF invoice and contract generation via `pdf-lib`, Excel data export using `xlsx`, and automated customer email confirmations via `nodemailer`.
+- <img src="icons/window.svg" width="16" height="16" align="center" /> **Packaging & Deployment** — Cross-platform packaging using `electron-builder` producing portable Windows installers and Linux executables.
 
 ---
 
-## 🛠️ Technical Stack
+## <img src="icons/cube.svg" width="22" height="22" align="center" /> Technical Stack
 
 | Domain | Technology / Library |
 | :--- | :--- |
@@ -43,7 +43,7 @@ Built with Svelte 5 runes and Electron, offering booking lifecycle management, i
 
 ---
 
-## 📁 Project Structure
+## <img src="icons/archive-box.svg" width="22" height="22" align="center" /> Project Structure
 
 ```
 Catering-Electron/
@@ -59,13 +59,14 @@ Catering-Electron/
 │   ├── build/                     # Application icons and installer assets
 │   ├── package.json               # Dependencies & build scripts
 │   └── vite.config.ts             # Vite & Electron configuration
+├── icons/                         # Tailwind Heroicons suite
 ├── Jayraldines-Catering.desktop   # Linux desktop application entry
 └── run.sh                         # Quick launch runner
 ```
 
 ---
 
-## 🚀 Getting Started
+## <img src="icons/rocket-launch.svg" width="22" height="22" align="center" /> Getting Started
 
 ### Prerequisites
 
@@ -102,6 +103,6 @@ npm run electron:build
 
 ---
 
-## 📄 License
+## <img src="icons/document-text.svg" width="22" height="22" align="center" /> License
 
 Proprietary © Medy Villarias. All rights reserved.
